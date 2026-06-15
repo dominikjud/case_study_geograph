@@ -9,7 +9,7 @@ library(sf)
 # 1. Inspect and (if necessary) reorient the DEM
 # ──────────────────────────────────────────────────────────────────
 
-dem_path <- "data/scotese_paleodems/Scotese_Wright_2018_Maps_1-88_1degX1deg_PaleoDEMS_nc_v2/Map48_PALEOMAP_1deg_Middle_Triassic_245Ma.nc"
+dem_path <- "data/raw/original/scotese_paleodems/Scotese_Wright_2018_Maps_1-88_1degX1deg_PaleoDEMS_nc_v2/Map48_PALEOMAP_1deg_Middle_Triassic_245Ma.nc"
 
 dem <- terra::rast(dem_path)
 print(dem)
