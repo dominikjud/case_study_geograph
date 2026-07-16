@@ -88,8 +88,108 @@ mantel_r_geog <- cor(as.numeric(as.dist(fst_shared)),
 ########################################
 
 elevGraph <- readRDS("data/intermediate/elevation_graph/elevGraph.rds")
+
+# Search over elevation cost coefficient
+run_elev_coeff <- function(cost.coeff) {
+  diff.cost <- function(x1, x2, cost.coeff) {
+    1 + sqrt(abs(x1 - x2)) * cost.coeff
+  }
+  
+  g <- setCosts(
+    elevGraph,
+    node.values = getNodesAttr(elevGraph)$elevation,
+    method      = "function",
+    FUN         = diff.cost,
+    cost.coeff  = cost.coeff
+  )
+  
+  assign(".gg_current_graph", g, envir = globalenv())
+  on.exit(rm(".gg_current_graph", envir = globalenv()), add = TRUE)
+  
+  gd <- hgdp.sub
+  gd@gGraph.name <- ".gg_current_graph"
+  
+  tryCatch({
+    m  <- dijkstraBetween(gd)
+    d  <- as.matrix(gPath2dist(m))
+    
+    # Attach population labels — d rows are in the order of populations
+    # in hgdp.sub
+    pops_order <- unique(getData(gd)$Population)
+    pops_order[pops_order == "Han (pooled)"] <- "Han"
+    
+    stopifnot(length(pops_order) == nrow(d))
+    rownames(d) <- colnames(d) <- pops_order
+    
+    # Now subset to fst_shared's order
+    d <- d[rownames(fst_shared), colnames(fst_shared)]
+    
+    cor(as.numeric(as.dist(fst_shared)),
+        as.numeric(as.dist(d)),
+        method = "pearson")
+  }, error = function(e) {
+    message("Error at cost.coeff = ", cost.coeff, ": ", conditionMessage(e))
+    NA_real_
+  })
+}
+
+run_elev_coeff(0.01)
+
+## Coarse log-spaced grid over ~5 orders of magnitude
+
+coeffs <- 10^seq(-5, 5, length.out = 25)   # 0.00001 to 1
+
+profile <- data.frame(
+  cost.coeff = coeffs,
+  mantel_r   = vapply(coeffs, run_elev_coeff, numeric(1))
+)
+
+print(profile)
+
+## Quick plot
+
+library(ggplot2)
+ggplot(profile, aes(cost.coeff, mantel_r)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = mantel_r_geog, linetype = "dashed", colour = "grey40") +
+  annotate("text", x = min(coeffs), y = mantel_r_geog,
+           label = "unweighted (land-only)", hjust = 0, vjust = -0.3, size = 3) +
+  scale_x_log10() +
+  labs(x = "cost coefficient (log scale)",
+       y = "Mantel r vs pairwise FST",
+       title = "1 + abs(x1 - x2) * cost.coeff ") +
+  theme_minimal()
+
+## Refine around the peak with a finer grid or optim()
+
+best_idx <- which.max(profile$mantel_r)
+best_coarse <- profile$cost.coeff[best_idx]
+
+cat("\nBest coarse coefficient:", best_coarse,
+    "with Mantel r =", round(profile$mantel_r[best_idx], 4), "\n")
+
+## Local refinement using optim() over a narrow log-window
+
+nm <- optim(
+  par     = log(best_coarse),
+  fn      = function(log_c) -run_elev_coeff(exp(log_c)),
+  method  = "Brent",              # 1D bounded search
+  lower   = log(best_coarse) - 1, # one order of magnitude below
+  upper   = log(best_coarse) + 1  # one order of magnitude above
+)
+
+best_coeff <- exp(nm$par)
+best_r     <- -nm$value
+
+cat("\nRefined optimum:\n",
+    "  cost.coeff =", best_coeff, "\n",
+    "  Mantel r   =", round(best_r, 4), "\n")
+
+
+
 diff.cost <- function(x1, x2, cost.coeff) {
-  1 + abs(x1 - x2) * cost.coeff        
+  1 + sqrt(x1 - x2) * cost.coeff        
 }
 
 elevGraph <- setCosts(
@@ -97,7 +197,7 @@ elevGraph <- setCosts(
   node.values = getNodesAttr(elevGraph)$elevation,
   method      = "function",
   FUN         = diff.cost,
-  cost.coeff  = 0.0007102718
+  cost.coeff  = 0.04504557
 )
 
 hgdpElevGraph <- setGraph(hgdp.sub, elevGraph)
@@ -116,5 +216,5 @@ mantel_r_elev <- cor(as.numeric(as.dist(fst_shared)),
 ########################################
 
 mantel_r_gc #0.749033
-mantel_r_geog #0.7970919
-mantel_r_elev #0.817038 or 0.8687626 (after cost search) or 0.8705 using the sqrt addition
+mantel_r_geog #0.8671144
+mantel_r_elev #0.8705
