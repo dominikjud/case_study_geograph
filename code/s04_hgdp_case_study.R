@@ -54,6 +54,9 @@ pops_canonical[pops == "Han (pooled)"] <- "Han"
 keep <- pops_canonical %in% shared_pops
 hgdp.sub <- hgdp[keep]
 
+myGraph <- dropCosts(elevGraph)
+hgdp.sub <- setGraph(hgdp.sub, "myGraph")
+
 ########################################
 # 4. get geographic as well as geodetic distances for the shared populations
 ########################################
@@ -80,4 +83,38 @@ mantel_r_geog <- cor(as.numeric(as.dist(fst_shared)),
                       as.numeric(as.dist(geog_dist)),
                       method = "pearson")
 
+########################################
+# 6. add the elevation data to the hgdp shared populations
+########################################
 
+elevGraph <- readRDS("data/intermediate/elevation_graph/elevGraph.rds")
+diff.cost <- function(x1, x2, cost.coeff) {
+  1 + abs(x1 - x2) * cost.coeff        
+}
+
+elevGraph <- setCosts(
+  elevGraph,
+  node.values = getNodesAttr(elevGraph)$elevation,
+  method      = "function",
+  FUN         = diff.cost,
+  cost.coeff  = 0.0007102718
+)
+
+hgdpElevGraph <- setGraph(hgdp.sub, elevGraph)
+isConnected(hgdpElevGraph)
+
+m_elev <- dijkstraBetween(hgdpElevGraph)
+
+elev_dist <- gPath2dist(m_elev)
+
+mantel_r_elev <- cor(as.numeric(as.dist(fst_shared)),
+                    as.numeric(as.dist(elev_dist)),
+                    method = "pearson")
+
+########################################
+# 7. compare the three distance matrices with fst
+########################################
+
+mantel_r_gc #0.749033
+mantel_r_geog #0.7970919
+mantel_r_elev #0.817038 or 0.8687626 (after cost search) or 0.8705 using the sqrt addition

@@ -10,6 +10,7 @@
 library(geoGraph)
 library(elevatr)
 library(dplyr)
+library(sf)
 
 ########################################
 # 1. Elevation raster over the world
@@ -103,29 +104,34 @@ elevGraph <- setCosts(
   node.values = getNodesAttr(elevGraph)$elevation,
   method      = "function",
   FUN         = diff.cost,
-  cost.coeff  = 0.01
+  cost.coeff  = 0.0007102718
 )
 
 plot(elevGraph, col = node_colours, edges = TRUE)
 
 ########################################
-# 7. assign graph to the hgdp object for later use
+# 7. save the elevation graph
 ########################################
+
+if (!dir.exists("data/intermediate/elevation_graph")) {
+  dir.create("data/intermediate/elevation_graph")
+}
+
+saveRDS(elevGraph, "data/intermediate/elevation_graph/elevGraph.rds")
+
 
 hgdpElevGraph <- setGraph(hgdp, elevGraph)
 isConnected(hgdpElevGraph)
 plot(hgdpElevGraph, col.gGraph = node_colours, reset = TRUE)
 
 
-
 addis <- cbind(38, 9)
 ori <- closestNode(elevGraph, addis)
 
 paths <- dijkstraFrom(hgdpElevGraph, ori)
-
+m <- dijkstraBetween(hgdpElevGraph)
 addis <- as.vector(addis)
 plot(hgdpElevGraph, reset = TRUE, col.gGraph = node_colours)
 plot(paths)
 points(addis[1], addis[2], pch = "x", cex = 2)
-text(addis[1] + 35, addis[2], "Addis Ababa", cex = .8, font = 2)
 points(hgdp, col.nodes = "black")
