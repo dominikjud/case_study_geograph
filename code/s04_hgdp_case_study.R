@@ -1,64 +1,48 @@
 #### hgdp case study ####
-
 library(geoGraph)
 library(readr)
+library(vegan)
 
 ########################################
-# # 1. Load the HGDP data and Fst pairwise matrix
+# 1. Load FST matrix and HGDP data
 ########################################
 
-# fst
 Fst_pairwise <- read_csv("data/raw/original/hgdp/Fst_pairwise.csv")
-fst_wide <- as.data.frame(Fst_pairwise)
-rownames(fst_wide) <- fst_wide[[1]]     
-fst_wide <- fst_wide[, -1]
-fst_mat  <- as.matrix(fst_wide)
+fst_mat <- as.matrix(as.data.frame(Fst_pairwise)[, -1])
+rownames(fst_mat) <- Fst_pairwise[[1]]
 
-# hgdp gData
 hgdpData <- getData(hgdp)
 
 ########################################
-# 2. check if the populations in the Fst_pairwise data are present in the hgdpData
+# 2. Standardise population names and identify shared populations
 ########################################
 
-populations_in_hgdp <- unique(hgdpData$Population)
-populations_in_fst <- rownames(fst_mat)
-setdiff <- setdiff(populations_in_fst, populations_in_hgdp)
-
-# check how many overlapping populations there are
-overlap_hgdp <- intersect(populations_in_fst, populations_in_hgdp)
-
-########################################
-# 3. Standardise population names and subset to shared populations
-########################################
-
+# HGDP-side rename
 hgdpData$pop_canonical <- hgdpData$Population
 hgdpData$pop_canonical[hgdpData$Population == "Han (pooled)"] <- "Han"
 
-# For the FST matrix, we rename via the rownames/colnames
+# FST-side rename
 rownames(fst_mat)[rownames(fst_mat) == "NAN-Melanesian"] <- "Melanesian"
 colnames(fst_mat)[colnames(fst_mat) == "NAN-Melanesian"] <- "Melanesian"
 
-populations_in_fst_canon <- rownames(fst_mat)
+# Intersection: 49 populations (drops Piapoco, Bergamo from FST;
+# Italian, Colombian, TundraNentsi from HGDP)
+shared_pops <- intersect(hgdpData$pop_canonical, rownames(fst_mat))
 
-shared_pops <- intersect(hgdpData$pop_canonical, populations_in_fst_canon)
-length(shared_pops)   # should be 49
+########################################
+# 3. Subset both datasets to shared populations
+########################################
 
-hgdp_shared <- hgdpData[hgdpData$pop_canonical %in% shared_pops, ]
+fst_shared <- fst_mat[shared_pops, shared_pops]
 
-fst_shared  <- fst_mat[shared_pops, shared_pops]  
-
-pops <- getData(hgdp)$Population
-pops_canonical <- pops
-pops_canonical[pops == "Han (pooled)"] <- "Han"
-keep <- pops_canonical %in% shared_pops
+keep <- hgdpData$pop_canonical %in% shared_pops
 hgdp.sub <- hgdp[keep]
 
-myGraph <- dropCosts(elevGraph)
+myGraph  <- dropCosts(worldgraph.40k)
 hgdp.sub <- setGraph(hgdp.sub, "myGraph")
 
 ########################################
-# 4. get geographic as well as geodetic distances for the shared populations
+# 4. get unweighted geographic as well as geodetic distances for the shared populations
 ########################################
 
 # get geodesic distances
@@ -68,23 +52,26 @@ rownames(gc_dist) <- colnames(gc_dist) <- hgdp.sub@data$Population
 
 # get geographic distances
 m <- dijkstraBetween(hgdp.sub)
-
 geog_dist <- gPath2dist(m)
 
 ########################################
 # 5. compare the geographic and geodetic distances with fst
 ########################################
 
-mantel_r_gc <- cor(as.numeric(as.dist(fst_shared)),
-                   as.numeric(as.dist(gc_dist)),
-                   method = "pearson")
-
-mantel_r_geog <- cor(as.numeric(as.dist(fst_shared)),
-                      as.numeric(as.dist(geog_dist)),
+mantel_r_gc <- vegan::mantel(as.dist(fst_shared),
+                      as.dist(gc_dist),
                       method = "pearson")
 
+mantel_r_geog <- vegan::mantel(as.dist(fst_shared),
+                         as.dist(geog_dist),
+                         method = "pearson")
+
+mantel_r_gc #0.749
+mantel_r_geog #0.8671
+
+
 ########################################
-# 6. add the elevation data to the hgdp shared populations
+# 6. limit geographic paths to land
 ########################################
 
 elevGraph <- readRDS("data/intermediate/elevation_graph/elevGraph.rds")
@@ -152,69 +139,27 @@ library(ggplot2)
 ggplot(profile, aes(cost.coeff, mantel_r)) +
   geom_line() +
   geom_point() +
-  geom_hline(yintercept = mantel_r_geog, linetype = "dashed", colour = "grey40") +
-  annotate("text", x = min(coeffs), y = mantel_r_geog,
+  geom_hline(yintercept = mantel_r_geog$statistic, linetype = "dashed", colour = "grey40") +
+  annotate("text", x = min(coeffs), y = mantel_r_geog$statistic,
            label = "unweighted (land-only)", hjust = 0, vjust = -0.3, size = 3) +
   scale_x_log10() +
   labs(x = "cost coefficient (log scale)",
        y = "Mantel r vs pairwise FST",
-       title = "1 + abs(x1 - x2) * cost.coeff ") +
+       title = "1 + sqrt(abs(x1 - x2)) * cost.coeff") +
   theme_minimal()
 
-## Refine around the peak with a finer grid or optim()
-
-best_idx <- which.max(profile$mantel_r)
-best_coarse <- profile$cost.coeff[best_idx]
-
-cat("\nBest coarse coefficient:", best_coarse,
-    "with Mantel r =", round(profile$mantel_r[best_idx], 4), "\n")
-
-## Local refinement using optim() over a narrow log-window
-
-nm <- optim(
-  par     = log(best_coarse),
-  fn      = function(log_c) -run_elev_coeff(exp(log_c)),
-  method  = "Brent",              # 1D bounded search
-  lower   = log(best_coarse) - 1, # one order of magnitude below
-  upper   = log(best_coarse) + 1  # one order of magnitude above
-)
-
-best_coeff <- exp(nm$par)
-best_r     <- -nm$value
-
-cat("\nRefined optimum:\n",
-    "  cost.coeff =", best_coeff, "\n",
-    "  Mantel r   =", round(best_r, 4), "\n")
-
-
-
-diff.cost <- function(x1, x2, cost.coeff) {
-  1 + sqrt(x1 - x2) * cost.coeff        
-}
-
-elevGraph <- setCosts(
-  elevGraph,
-  node.values = getNodesAttr(elevGraph)$elevation,
-  method      = "function",
-  FUN         = diff.cost,
-  cost.coeff  = 0.04504557
-)
-
-hgdpElevGraph <- setGraph(hgdp.sub, elevGraph)
-isConnected(hgdpElevGraph)
-
-m_elev <- dijkstraBetween(hgdpElevGraph)
-
-elev_dist <- gPath2dist(m_elev)
-
-mantel_r_elev <- cor(as.numeric(as.dist(fst_shared)),
-                    as.numeric(as.dist(elev_dist)),
-                    method = "pearson")
+# get the best mantel r and the corresponding cost coefficient
+best_row <- profile[which.max(profile$mantel_r), ]
 
 ########################################
 # 7. compare the three distance matrices with fst
 ########################################
 
-mantel_r_gc #0.749033
-mantel_r_geog #0.8671144
-mantel_r_elev #0.8705
+mantel_r_gc$statistic #0.749033
+mantel_r_geog$statistic #0.8671144
+best_row$mantel_r #0.8701551
+
+# so on a worldwide scale, adding terrain heterogeneity to the geographic distance matrix 
+# improves the correlation with FST only slightly. 
+# The unweighted geographic distance matrix already captures most of the variation in FST.
+
