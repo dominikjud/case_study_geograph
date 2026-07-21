@@ -10,6 +10,7 @@ library(geoGraph)
 library(terra)
 library(sf)
 library(elevatr)
+library(readr)
 
 ##################################
 # creat a hexGraph for the area 
@@ -128,23 +129,31 @@ plot(asiaGD, col.gGraph = node_colours)
 # search for the best cost surface 
 #########################################
 
-# here we use a hinge function (alternatively we could also set just a threshhold)
+attr <- getNodesAttr(elevGraph)
+sd_ele <- attr$elevation
+base_habitat <- getNodesAttr(elevGraph)$habitat   # snapshot before any changes
 
-hinge.cost <- function(x1, x2, threshold, cost.coeff) {
-  mean_sd <- (x1 + x2) / 2
-  1 + pmax(0, mean_sd - threshold) * cost.coeff
-}
-
-run_hinge <- function(threshold, cost.coeff) {
-  g_local <- setCosts(
-    g,
-    node.values = getNodesAttr(g)$elevation,
-    method      = "function",
-    FUN         = hinge.cost,
-    threshold   = threshold,
-    cost.coeff  = cost.coeff
+run_threshold <- function(threshold) {
+  # Reclassify cells based on this threshold
+  habitat_new <- dplyr::case_when(
+    base_habitat == "sea"         ~ "sea",
+    is.na(sd_ele)                 ~ "land",
+    sd_ele > threshold            ~ "rugged",
+    TRUE                          ~ "land"
   )
   
+  g_local <- setNodesAttr(elevGraph, attr.name = "habitat", values = habitat_new)
+  
+  cost.rules <- data.frame(
+    habitat = c("sea", "land", "rugged"),
+    cost    = c(100,   1,      100)
+  )
+  
+  g_local <- setCosts(g_local, method = "mean",
+                      attr.name = "habitat",
+                      cost.rules = cost.rules)
+  
+  # Assign the modified graph so the gData can find it by name
   base::assign(".gg_current_graph", g_local, envir = globalenv())
   on.exit(rm(".gg_current_graph", envir = globalenv()), add = TRUE)
   
@@ -165,69 +174,117 @@ run_hinge <- function(threshold, cost.coeff) {
         as.numeric(as.dist(d)),
         method = "pearson")
   }, error = function(e) {
-    message("Error at threshold=", round(threshold, 1),
-            ", coeff=", signif(cost.coeff, 3),
-            ": ", conditionMessage(e))
+    message("Error at threshold = ", threshold, ": ", conditionMessage(e))
     NA_real_
   })
 }
 
+run_threshold(max(sd_ele, na.rm = TRUE))
 
-run_hinge(threshold = 0, cost.coeff = 0)
 
-
-# Thresholds chosen from the actual SD distribution
-thresholds <- quantile(sd_vec, c(0.50, 0.70, 0.80, 0.85, 0.90, 0.95, 0.98, 0.99),
+# Thresholds chosen from the SD distribution using quantiles
+thresholds <- quantile(sd_ele,
+                       rep(seq(0.7, 0.999, by = 0.001)),
                        na.rm = TRUE)
 
-# Coefficients log-spaced
-coeffs <- 10^seq(-4, 1, length.out = 12)
 
-# Full grid
-grid <- expand.grid(threshold = as.numeric(thresholds),
-                    cost.coeff = coeffs)
+profile <- data.frame(
+  quantile   = names(thresholds),
+  threshold  = as.numeric(thresholds),
+  mantel_r   = vapply(as.numeric(thresholds), run_threshold, numeric(1))
+)
 
-grid$mantel_r <- mapply(run_hinge,
-                        threshold  = grid$threshold,
-                        cost.coeff = grid$cost.coeff)
-
-
-head(grid[order(-grid$mantel_r), ], 10)
+print(profile)
 
 library(ggplot2)
 
-ggplot(grid, aes(x = threshold, y = cost.coeff, fill = mantel_r)) +
-  geom_tile() +
-  scale_y_log10() +
-  scale_fill_viridis_c(option = "magma", name = "Mantel r") +
+ggplot(profile, aes(threshold, mantel_r)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_text(aes(label = quantile), vjust = -1, size = 3) +
   labs(x = "SD threshold (m)",
-       y = "Cost coefficient (log scale)",
-       title = "Hinge cost function: (threshold, coefficient) landscape") +
+       y = "Mantel r vs pairwise FST",
+       title = "Grid search: SD threshold defining 'rugged' cells (cost = 100)",
+       subtitle = "Labels show quantile of SD distribution") +
   theme_minimal()
 
+best_idx <- which.max(profile$mantel_r)
+cat("Best threshold:", round(profile$threshold[best_idx], 1), "m",
+    "(", profile$quantile[best_idx], "of SD distribution)\n",
+    "Mantel r =", round(profile$mantel_r[best_idx], 4), "\n")
 
-best_idx  <- which.max(grid$mantel_r)
-best_pair <- grid[best_idx, ]
+#########################################
+# compare the elevGraph with best threshold to the original graph
+#########################################
 
-cat("Best grid point:\n",
-    "  threshold  =", round(best_pair$threshold, 1), "m\n",
-    "  cost.coeff =", signif(best_pair$cost.coeff, 3), "\n",
-    "  Mantel r   =", round(best_pair$mantel_r, 4), "\n")
+best_threshold <- round(profile$threshold[best_idx], 1)
 
-# Local refinement, parameterising in log space for the coefficient
-nm <- optim(
-  par     = c(threshold = best_pair$threshold,
-              log_coeff = log(best_pair$cost.coeff)),
-  fn      = function(p) -run_hinge(threshold = p[1], cost.coeff = exp(p[2])),
-  method  = "Nelder-Mead",
-  control = list(maxit = 60, reltol = 1e-4)
+# Reclassify cells at the winning threshold
+habitat_final <- dplyr::case_when(
+  base_habitat == "sea"       ~ "sea",
+  is.na(sd_ele)               ~ "land",
+  sd_ele > best_threshold     ~ "rugged",
+  TRUE                        ~ "land"
 )
 
-cat("\nRefined optimum:\n",
-    "  threshold  =", round(nm$par[1], 1), "m\n",
-    "  cost.coeff =", signif(exp(nm$par[2]), 3), "\n",
-    "  Mantel r   =", round(-nm$value, 4), "\n")
+# Build the final graph
+optiGraph <- setNodesAttr(hexGraph,
+                                 attr.name = "habitat",
+                                 values    = habitat_final)
 
+# Set colours: sea light blue, land pale green, rugged brown
+colors_final <- data.frame(
+  habitat = c("sea",       "land",     "rugged"),
+  color   = c("#b0d4e8",   "#90c090",  "#8b6340")
+)
+optiGraph <- setColors(optiGraph, colors_final)
 
+# Apply the same costs used in the grid search (for consistency)
+cost.rules <- data.frame(
+  habitat = c("sea", "land", "rugged"),
+  cost    = c(100,   1,      100)
+)
+optiGraph <- setCosts(optiGraph,
+                             method     = "mean",
+                             attr.name  = "habitat",
+                             cost.rules = cost.rules)
 
+plot(optimal_hexGraph, reset = TRUE)
+
+myGraph  <- dropCosts(optiGraph)
+hgdp.sub.raw <- setGraph(asiaGD, "myGraph")
+hgdp.sub.ele <- setGraph(asiaGD, "optiGraph")
+
+# get geodesic distances
+coords  <- getCoords(asiaGD)
+gc_dist <- sp::spDists(coords, longlat = TRUE)
+rownames(gc_dist) <- colnames(gc_dist) <- asiaGD@data$Population
+
+# get raw geographic distances
+m <- dijkstraBetween(hgdp.sub.raw)
+raw_geog_dist <- gPath2dist(m)
+
+# get geographic distances with elevation
+m_elev <- dijkstraBetween(hgdp.sub.ele)
+geog_dist <- gPath2dist(m_elev)
+
+########################################
+# 5. compare the geographic and geodetic distances with fst
+########################################
+
+mantel_r_gc <- vegan::mantel(as.dist(fst_shared),
+                             as.dist(gc_dist),
+                             method = "pearson")
+
+mantel_r_geog <- vegan::mantel(as.dist(fst_shared),
+                               as.dist(geog_dist),
+                               method = "pearson")
+
+mantel_r_raw <- vegan::mantel(as.dist(fst_shared),
+                               as.dist(raw_geog_dist),
+                               method = "pearson")
+
+mantel_r_gc$statistic
+mantel_r_raw$statistic
+mantel_r_geog$statistic
 
