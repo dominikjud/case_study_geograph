@@ -34,13 +34,6 @@ spatr <- terra::rast(elevation_data)
 ########################################
 landGraph <- worldgraph.40k
 
-costs <- data.frame(
-  habitat = c("sea", "land"),
-  cost    = c(1000,   1)
-)
-
-#landGraph <- setCosts(landGraph, attr.name = "habitat", method = "mean", cost.rules = costs)
-
 landGraph <- dropDeadEdges(landGraph, thres = 10)
 
 plotEdges(landGraph)
@@ -48,8 +41,8 @@ plotEdges(landGraph)
 elevGraph <- assignByRaster(
   landGraph,
   raster    = spatr,
-  fun       = mean,
-  attr.name = "elevation"
+  fun       = "sd",
+  layer.name = "elevation"
 )
 
 ########################################
@@ -57,7 +50,7 @@ elevGraph <- assignByRaster(
 ########################################
 
 node_attr <- getNodesAttr(elevGraph)
-node_attr$elevation      <- node_attr$raster_points
+node_attr$elevation      <- node_attr$elevation
 node_attr$raster_points  <- NULL
 
 is_sea <- as.character(node_attr$habitat) == "sea"
@@ -88,29 +81,9 @@ node_colours[is_sea] <- "lightblue"
 
 plot(elevGraph, col = node_colours, reset = TRUE, edges = FALSE)
 
-########################################
-# 6. Set costs based on elevation difference
-########################################
-
-## Cost of moving between two adjacent nodes increases with their elevation
-## difference: exp(-|dz| * cost.coeff) gives a weight in (0, 1] that decays
-
-diff.cost <- function(x1, x2, cost.coeff) {
-  1 + abs(x1 - x2) * cost.coeff        
-}
-
-elevGraph <- setCosts(
-  elevGraph,
-  node.values = getNodesAttr(elevGraph)$elevation,
-  method      = "function",
-  FUN         = diff.cost,
-  cost.coeff  = 0.0007102718
-)
-
-plot(elevGraph, col = node_colours, edges = TRUE)
 
 ########################################
-# 7. save the elevation graph
+# 6. save the elevation graph
 ########################################
 
 if (!dir.exists("data/intermediate/elevation_graph")) {
@@ -120,18 +93,3 @@ if (!dir.exists("data/intermediate/elevation_graph")) {
 saveRDS(elevGraph, "data/intermediate/elevation_graph/elevGraph.rds")
 
 
-hgdpElevGraph <- setGraph(hgdp, elevGraph)
-isConnected(hgdpElevGraph)
-plot(hgdpElevGraph, col.gGraph = node_colours, reset = TRUE)
-
-
-addis <- cbind(38, 9)
-ori <- closestNode(elevGraph, addis)
-
-paths <- dijkstraFrom(hgdpElevGraph, ori)
-m <- dijkstraBetween(hgdpElevGraph)
-addis <- as.vector(addis)
-plot(hgdpElevGraph, reset = TRUE, col.gGraph = node_colours)
-plot(paths)
-points(addis[1], addis[2], pch = "x", cex = 2)
-points(hgdp, col.nodes = "black")

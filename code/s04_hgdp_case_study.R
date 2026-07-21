@@ -79,7 +79,8 @@ elevGraph <- readRDS("data/intermediate/elevation_graph/elevGraph.rds")
 # Search over elevation cost coefficient
 run_elev_coeff <- function(cost.coeff) {
   diff.cost <- function(x1, x2, cost.coeff) {
-    1 + sqrt(abs(x1 - x2)) * cost.coeff
+    sum <- x1 + x2
+    mean(sum)^cost.coeff
   }
   
   g <- setCosts(
