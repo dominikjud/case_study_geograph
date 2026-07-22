@@ -1,190 +1,233 @@
-# ──────────────────────────────────────────────────────────────────
-# geoGraph: comparing square vs hexagonal grid distances from Cairo
+##############################################################################
+# Compare topoDistance to geoGraph on the Cairo-to-Eurasia route set
 # across Eurasia, replicating the Di Santo et al. (2026) setup
-# ──────────────────────────────────────────────────────────────────
+##############################################################################
 
-library(geoGraph)
-library(terra)
+library(topoDistance)
+library(elevatr)
 library(sf)
+library(terra)
+library(geoGraph)
 
-# ──────────────────────────────────────────────────────────────────
-# 1. Define the study area (to match Figure 4B of Di Santo et al.)
-# ──────────────────────────────────────────────────────────────────
-
-geo.box <- c(xmin = -15, xmax = 170, ymin = 0, ymax = 75)
-
-# ──────────────────────────────────────────────────────────────────
-# 2. Build a SQUARE-grid gGraph 
-# ──────────────────────────────────────────────────────────────────
-
-g_sq <- makeSquareGrid(30000, lon.range = c(-15, 170),
-                       lat.range = c(0, 75))
-
-# Assign land/sea status via rnaturalearth coastline overlay
-g_sq <- findLand(g_sq)
-
-# Habitat: land = 1, sea = impassable
-cost_rules <- data.frame(
-  habitat = c("land", "sea"),
-  cost    = c(1,      1e6),
-  stringsAsFactors = FALSE
-)
-
-g_sq <- setCosts(g_sq, attr.name = "habitat",
-                 cost.rules = cost_rules, method = "mean")
-g_sq <- dropDeadNodes(g_sq)
-#g_sq <- setDistCosts(g_sq)
-
-color.rules = data.frame(
-  habitat = c("land", "sea"),
-  color   = c("lightgreen",  "lightblue"))
-
-
-g_sq <- setColors(g_sq, color.rules)
-plot(g_sq)
-
-
-# ──────────────────────────────────────────────────────────────────
-# 3. Build a HEXAGONAL gGraph at ~110 km spacing
-# ──────────────────────────────────────────────────────────────────
-
-g_hex <- makeHexGrid(geo.box = geo.box, spacing = 110)
-
-g_hex <- findLand(g_hex)
-
-g_hex <- setCosts(g_hex, attr.name = "habitat",
-                  cost.rules = cost_rules, method = "mean")
-g_hex <- dropDeadNodes(g_hex)
-#g_hex <- setDistCosts(g_hex)
-
-g_hex <- setColors(g_hex, color.rules)
-plot(g_hex)
-plotEdges(g_hex)
-
-
-# ──────────────────────────────────────────────────────────────────
-# 4. Define target locations spanning Eurasia
-# ──────────────────────────────────────────────────────────────────
-# Cairo as source just like in Di Santo et al. (2026)
+# ─── 1. Load the target points ───────────────────────────────────────
 
 targets <- data.frame(
   name = c("Cairo (source)",
            "Istanbul", "Athens", "Rome", "Madrid", "Paris",
            "London", "Berlin", "Stockholm", "Helsinki",
-           "Murmansk",         # high latitude, ~69°N
-           "Tehran", "Tbilisi", "Baku",
-           "Tashkent", "Almaty",
-           "Novosibirsk",      # mid-Siberia, ~55°N
-           "Yakutsk",          # NE Siberia, ~62°N, very far east
-           "Vladivostok",      # Pacific coast, ~43°N
-           "Magadan",          # NE Russia, ~60°N, far east
-           "Beijing",
-           "Ulaanbaatar"),
-  lon  = c(31.24,
-           28.98, 23.73, 12.50, -3.70, 2.35,
-           -0.13, 13.40, 18.07, 24.94,
-           33.08,
-           51.39, 44.79, 49.87,
-           69.27, 76.89,
-           82.93,
-           129.74,
-           131.89,
-           150.81,
-           116.41,
-           106.92),
-  lat  = c(30.04,
-           41.01, 37.98, 41.90, 40.42, 48.86,
-           51.51, 52.52, 59.33, 60.17,
-           68.97,
-           35.69, 41.72, 40.41,
-           41.31, 43.24,
-           55.01,
-           62.04,
-           43.12,
-           59.56,
-           39.90,
-           47.89),
-  stringsAsFactors = FALSE
+           "Murmansk", "Tehran", "Tbilisi", "Baku",
+           "Tashkent", "Almaty", "Novosibirsk", "Yakutsk",
+           "Vladivostok", "Magadan", "Beijing", "Ulaanbaatar"),
+  lon  = c(31.24, 28.98, 23.73, 12.50, -3.70, 2.35,
+           -0.13, 13.40, 18.07, 24.94, 33.08, 51.39, 44.79, 49.87,
+           69.27, 76.89, 82.93, 129.74, 131.89, 150.81, 116.41, 106.92),
+  lat  = c(30.04, 41.01, 37.98, 41.90, 40.42, 48.86,
+           51.51, 52.52, 59.33, 60.17, 68.97, 35.69, 41.72, 40.41,
+           41.31, 43.24, 55.01, 62.04, 43.12, 59.56, 39.90, 47.89)
 )
 
-# ──────────────────────────────────────────────────────────────────
-# 5. Build a gData for each gGraph
-# ──────────────────────────────────────────────────────────────────
+# ─── 2. Get a DEM covering the full Cairo-to-Magadan extent ──────────
 
-gd_sq  <- new("gData", coords = targets[, c("lon", "lat")],
-              data = targets["name"], gGraph.name = "g_sq")
-gd_sq <- closestNode(gd_sq, attr.name = "habitat", attr.value = "land")
+# Compute a bounding box with margin
+lon_range <- range(targets$lon) + c(-2, 2)
+lat_range <- range(targets$lat) + c(-2, 2)
 
-
-gd_hex <- new("gData", coords = targets[, c("lon", "lat")],
-              data = targets["name"], gGraph.name = "g_hex")
-gd_hex <- closestNode(gd_hex, attr.name = "habitat", attr.value = "land")
-
-# Sanity check: all targets should map to land nodes
-isConnected(g_sq,  gd_sq)
-isConnected(g_hex, gd_hex)
-
-# ──────────────────────────────────────────────────────────────────
-# 6. Compute least-cost paths FROM Cairo to all other targets
-# ──────────────────────────────────────────────────────────────────
-
-cairo_idx <- 1   # first row in `targets`
-
-paths_sq  <- dijkstraFrom(gd_sq,  getNodes(gd_sq)[cairo_idx])
-paths_hex <- dijkstraFrom(gd_hex, getNodes(gd_hex)[cairo_idx])
-
-dists_sq  <- gPath2dist(paths_sq)
-dists_hex <- gPath2dist(paths_hex)
-
-# ──────────────────────────────────────────────────────────────────
-# 7. Tidy up into a comparison table
-# ──────────────────────────────────────────────────────────────────
-
-results <- data.frame(
-  name      = targets$name,
-  lon       = targets$lon,
-  lat       = targets$lat,
-  dist_sq   = dists_sq,
-  dist_hex  = dists_hex,
-  diff_km   = dists_hex - dists_sq,
-  rel_diff  = (dists_hex - dists_sq) / dists_hex
+# Build sf polygon for elevatr
+extent_sf <- sf::st_as_sf(
+  data.frame(id = 1L),
+  geometry = sf::st_as_sfc(
+    sf::st_bbox(c(xmin = lon_range[1], xmax = lon_range[2],
+                  ymin = lat_range[1], ymax = lat_range[2]),
+                crs = 4326)
+  )
 )
 
-# Sort by hexagonal distance for readability
-results <- results[order(results$dist_hex), ]
-print(results, row.names = FALSE)
+# z = 4 gives ~6 km cells, which is a reasonable compromise between
+# accuracy and computational cost for Eurasian-scale paths.
+# For direct comparison to the Di Santo et al. analysis, z = 5 (~3 km)
+# is more common — but at this extent, z = 5 gives ~100 million cells,
+# which topoDist will handle very slowly. Start with z = 4.
 
-# ──────────────────────────────────────────────────────────────────
-# 8. Visualise: side-by-side maps of paths from Cairo
-# ──────────────────────────────────────────────────────────────────
+dem <- elevatr::get_elev_raster(locations = extent_sf,
+                                z         = 4,
+                                clip      = "locations")
 
-par(mfrow = c(2, 1), mar = c(2, 2, 3, 1))
+# ─── 3. Mask oceans ──────────────────────────────────────────────────
 
-plot(g_sq, reset = TRUE,
-     main = "Square 1° grid — distances from Cairo")
+# topoDist doesn't distinguish land from sea. We need to set sea pixels
+# to NA so the algorithm can't route through them.
 
-plot(paths_sq, add = TRUE, lwd = 1.5, col = "darkblue")
+dem_rast <- terra::rast(dem)
+dem_land <- dem_rast
+dem_land[dem_land <= 0] <- NA   # oceans (and below-sea-level land like
+# the Dead Sea) become impassable
+# This is the standard convention.
 
-plot(g_hex, reset = TRUE,
-     main = "Hexagonal 110 km grid — distances from Cairo")
+# Convert back to raster (topoDist expects a raster::RasterLayer, not
+# terra::SpatRaster, in older versions)
+dem_land_raster <- raster::raster(dem_land)
 
-plot(paths_hex, add = TRUE, lwd = 1.5, col = "darkblue")
+# ─── 4. Prepare points as a two-column matrix ────────────────────────
 
-par(mfrow = c(1, 1))
+# topoDist wants a matrix of coordinates
+points_matrix <- as.matrix(targets[, c("lon", "lat")])
+rownames(points_matrix) <- targets$name
 
-# ──────────────────────────────────────────────────────────────────
-# 9. Bias as a function of latitude
-# ──────────────────────────────────────────────────────────────────
-# The headline result for the paper: the discrepancy between square
-# and hex distances grows with latitude
+# ─── 5. Compute pairwise topographic distances ───────────────────────
+# This is slow — expect 5-30 minutes for 22 points on a Eurasian DEM.
+# The internal algorithm builds a lattice graph from every DEM pixel
+# and runs Dijkstra from each source. Time scales roughly with
+# (n_points × n_pixels).
 
-par(mar = c(4, 4, 3, 1))
-plot(results$lat, results$rel_diff * 100,
-     xlab = "Latitude (°N)",
-     ylab = "(hex − square) / hex distance, %",
-     main = "Square-grid distance bias as a function of latitude",
-     pch  = 19, col = "darkred")
-abline(h = 0, lty = 2, col = "grey50")
-text(results$lat, results$rel_diff * 100,
-     labels = results$name, pos = 4, cex = 0.6)
+topo_dists <- topoDistance::topoDist(
+  DEM      = dem_land_raster,
+  pts      = points_matrix,
+  paths    = TRUE   # save memory; don't return path geometries
+)
 
+# Result is a matrix of distances in the DEM's linear units (metres for
+# this projection). Rownames/colnames should match target names.
+
+cat("topoDistance computation complete.\n")
+print(round(topo_dists / 1000, 0))   # in km, rounded to whole numbers
+
+# ─── 6. Extract distances from Cairo ─────────────────────────────────
+
+# Cairo is the first row
+cairo_topo <- topo_dists[1, ]
+
+result <- data.frame(
+  name          = targets$name,
+  lat           = targets$lat,
+  lon           = targets$lon,
+  topo_dist_km  = cairo_topo / 1000
+)
+
+print(result)
+
+
+##############################################################################
+# 8. Compute geoGraph distances from Cairo for the same targets
+##############################################################################
+
+# ─── Build the same-name targets, with Cairo first ───────────────────
+
+# Load the geoGraph graph you're using (worldgraph.40k, land-only)
+g_geog <- dropCosts(rawgraph.40k)   # land-only, unweighted
+
+# Build a gData object of the target points
+target_gd <- new("gData", coords = targets[, c("lon", "lat")],
+                 data = targets["name"], gGraph.name = "g_geog")
+
+target_gd <- closestNode(target_gd, attr.name = "habitat", attr.value = "land")
+
+# Verify all points connected (some coastal cities might need nudging)
+isConnected(target_gd)
+
+# ─── Compute least-cost paths from Cairo to all other targets ────────
+
+cairo_node <- unlist(target_gd@nodes.id[1])   # first row of targets = Cairo
+
+paths <- dijkstraFrom(target_gd, start = cairo_node)
+dists_geograph <- gPath2dist(paths)
+
+# Attach to the targets data frame
+targets$geog_dist_raw <- dists_geograph
+
+##############################################################################
+# 9. Combine into a comparison table
+##############################################################################
+
+comparison <- data.frame(
+  name         = targets$name,
+  lat          = targets$lat,
+  lon          = targets$lon,
+  topo_m       = cairo_topo,                    # from your topoDistance run
+  topo_km      = cairo_topo / 1000,
+  geog_raw     = targets$geog_dist_raw          # geoGraph units, whatever they are
+)
+
+# Rank each distance from smallest to largest
+comparison$rank_topo <- rank(comparison$topo_km)
+comparison$rank_geog <- rank(comparison$geog_raw)
+
+# Normalise both by their maximum, so each is on [0,1]
+comparison$topo_norm <- comparison$topo_km / max(comparison$topo_km, na.rm = TRUE)
+comparison$geog_norm <- comparison$geog_raw / max(comparison$geog_raw, na.rm = TRUE)
+
+# Sort by topoDistance for readability
+comparison <- comparison[order(comparison$topo_km), ]
+
+print(comparison[, c("name", "lat", "topo_km", "geog_raw",
+                     "topo_norm", "geog_norm", "rank_topo", "rank_geog")])
+
+##############################################################################
+# 10. Quantify agreement
+##############################################################################
+
+# Pearson correlation on raw values (scale-invariant)
+r_pearson <- cor(comparison$topo_km, comparison$geog_raw, method = "pearson")
+
+# Spearman correlation on ranks (checks ordering agreement)
+r_spearman <- cor(comparison$topo_km, comparison$geog_raw, method = "spearman")
+
+# Difference in normalised distances (target-by-target)
+comparison$normalized_diff <- comparison$geog_norm - comparison$topo_norm
+
+cat("Pearson r (topo vs geog):  ", round(r_pearson, 4), "\n")
+cat("Spearman r (topo vs geog): ", round(r_spearman, 4), "\n")
+cat("\nMean absolute normalised diff:",
+    round(mean(abs(comparison$normalized_diff)), 4), "\n")
+cat("Max absolute normalised diff:",
+    round(max(abs(comparison$normalized_diff)), 4), "\n")
+
+##############################################################################
+# 11. Plot 1 — scatter of the two distances
+##############################################################################
+
+library(ggplot2)
+library(ggrepel)
+
+ggplot(comparison, aes(topo_km, geog_raw)) +
+  geom_point(size = 2, colour = "steelblue") +
+  geom_smooth(method = "lm", se = FALSE, colour = "tomato", linewidth = 0.5) +
+  ggrepel::geom_text_repel(aes(label = name), size = 3, max.overlaps = 20) +
+  labs(x = "Topographic distance from Cairo (km, topoDistance)",
+       y = "Least-cost distance from Cairo (raw units, geoGraph)",
+       title = "geoGraph vs topoDistance: distances from Cairo across Eurasia",
+       subtitle = sprintf("Pearson r = %.3f, Spearman r = %.3f",
+                          r_pearson, r_spearman)) +
+  theme_minimal()
+
+##############################################################################
+# 12. Plot 2 — normalised distances side by side, coloured by latitude
+##############################################################################
+
+# For each target, compare geog_norm vs topo_norm; residuals show
+# the latitudinal bias
+
+ggplot(comparison, aes(x = lat, y = normalized_diff)) +
+  geom_point(size = 2, colour = "darkred") +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey40") +
+  geom_smooth(method = "lm", se = FALSE, colour = "steelblue", linewidth = 0.5) +
+  ggrepel::geom_text_repel(aes(label = name), size = 3, max.overlaps = 20) +
+  labs(x = "Target latitude (°N)",
+       y = "Normalised distance difference (geoGraph − topoDist)",
+       title = "Latitudinal bias in geoGraph vs topoDistance",
+       subtitle = "Positive values: geoGraph gives longer relative distance") +
+  theme_minimal()
+
+##############################################################################
+# 13. Statistical test: is there a latitude-dependent bias?
+##############################################################################
+
+# Regress the normalised difference on target latitude
+lm_bias <- lm(normalized_diff ~ lat, data = comparison)
+summary(lm_bias)
+
+# If the slope is significantly non-zero, there's a systematic
+# latitude-dependent bias.
+cat("\nSlope of bias vs latitude:", 
+    round(coef(lm_bias)["lat"], 5), "\n")
+cat("p-value:",
+    round(summary(lm_bias)$coefficients["lat", "Pr(>|t|)"], 4), "\n")
