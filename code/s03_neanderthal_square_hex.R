@@ -113,11 +113,11 @@ print(result)
 # ─── Build the same-name targets, with Cairo first ───────────────────
 
 # Load the geoGraph graph you're using (worldgraph.40k, land-only)
-g_geog <- dropCosts(rawgraph.40k)   # land-only, unweighted
+g_geog <- dropCosts(worldgraph.40k)   # land-only, unweighted
 
 # Build a gData object of the target points
 target_gd <- new("gData", coords = targets[, c("lon", "lat")],
-                 data = targets["name"], gGraph.name = "g_geog")
+                 data = targets["name"], gGraph.name = "rawgraph.40k")
 
 target_gd <- closestNode(target_gd, attr.name = "habitat", attr.value = "land")
 

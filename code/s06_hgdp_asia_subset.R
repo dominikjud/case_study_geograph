@@ -204,8 +204,7 @@ ggplot(profile, aes(threshold, mantel_r)) +
   geom_text(aes(label = quantile), vjust = -1, size = 3) +
   labs(x = "SD threshold (m)",
        y = "Mantel r vs pairwise FST",
-       title = "Grid search: SD threshold defining 'rugged' cells (cost = 100)",
-       subtitle = "Labels show quantile of SD distribution") +
+       title = "Grid search: SD threshold defining 'rugged' cells (cost = 100)") +
   theme_minimal()
 
 best_idx <- which.max(profile$mantel_r)
@@ -217,7 +216,7 @@ cat("Best threshold:", round(profile$threshold[best_idx], 1), "m",
 # compare the elevGraph with best threshold to the original graph
 #########################################
 
-best_threshold <- round(profile$threshold[best_idx], 1)
+best_threshold <- round(profile$threshold[best_idx], 1) #580.1
 
 # Reclassify cells at the winning threshold
 habitat_final <- dplyr::case_when(
@@ -249,10 +248,10 @@ optiGraph <- setCosts(optiGraph,
                              attr.name  = "habitat",
                              cost.rules = cost.rules)
 
-plot(optimal_hexGraph, reset = TRUE)
+plot(optiGraph, reset = TRUE)
 
-myGraph  <- dropCosts(optiGraph)
-hgdp.sub.raw <- setGraph(asiaGD, "myGraph")
+#myGraph  <- dropCosts(optiGraph)
+hgdp.sub.raw <- setGraph(asiaGD, "hexGraph")
 hgdp.sub.ele <- setGraph(asiaGD, "optiGraph")
 
 # get geodesic distances
@@ -284,7 +283,7 @@ mantel_r_raw <- vegan::mantel(as.dist(fst_shared),
                                as.dist(raw_geog_dist),
                                method = "pearson")
 
-mantel_r_gc$statistic
-mantel_r_raw$statistic
-mantel_r_geog$statistic
+mantel_r_gc$statistic #0.5480333
+mantel_r_raw$statistic #0.5358691
+mantel_r_geog$statistic #0.6997
 
